@@ -159,6 +159,18 @@ class TblProductData
         return $this;
     }
 
+    public function getMinPrice(): ?string
+    {
+        return $this->minPrice;
+    }
+
+    public function setMinPrice(?string $minPrice): self
+    {
+        $this->minPrice = $minPrice;
+
+        return $this;
+    }
+
     public function getMaxPrice(): ?string
     {
         return $this->maxPrice;

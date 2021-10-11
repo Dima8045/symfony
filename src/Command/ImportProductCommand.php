@@ -2,21 +2,17 @@
 
 namespace App\Command;
 
+use App\Entity\TblProductData;
+use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
-use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\Console\Question\Question;
-use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Serializer\Encoder\CsvEncoder;
 use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
 use Symfony\Component\Serializer\Serializer;
-use Symfony\Component\Validator\Constraints\Regex;
-use Symfony\Component\Validator\Validation;
-use function Symfony\Component\DependencyInjection\Loader\Configurator\env;
 
 #[AsCommand(
     name: 'import-product',
@@ -27,36 +23,49 @@ class ImportProductCommand extends Command
     const MAX_ATTEMPTS = 5;
     private $question;
 
-    public function __construct(string $projectDir)
+    public function __construct(string $projectDir, EntityManagerInterface $entityManager)
     {
         $this->projectDir = $projectDir;
+        $this->entityManager = $entityManager;
 
         parent::__construct();
     }
 
     protected function configure(): void
     {
-        $this->setProcessTitle('Import Products');
+        $this
+            ->setProcessTitle('Import Products')
+            ->addArgument('test', InputArgument::OPTIONAL);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $helper = $this->getHelper('question');
 
-        $this->questionHandler('Enter Max Product Quantity: ');
-        $maxStock = $helper->ask($input, $output, $this->question);
+        if ($input->getArgument('test')) {
+            $maxStock = 10;
+            $minPrice = 5;
+            $maxPrice = 1000;
+        } else {
+            $helper = $this->getHelper('question');
 
-        $this->questionHandler('Enter Min Product Price: ');
-        $minPrice = $helper->ask($input, $output, $this->question);
+            $this->questionHandler('Enter Max Product Quantity: ');
+            $maxStock = $helper->ask($input, $output, $this->question);
 
-        $this->questionHandler('Enter Max Product Price: ');
-        $maxPrice = $helper->ask($input, $output, $this->question);
+            $this->questionHandler('Enter Min Product Price: ');
+            $minPrice = $helper->ask($input, $output, $this->question);
+
+            $this->questionHandler('Enter Max Product Price: ');
+            $maxPrice = $helper->ask($input, $output, $this->question);
+        }
 
         $rows = $this->csvRowsProvider();
 
-        $rowsMapped = $this->productsMapper($rows, $maxStock, $minPrice, $maxPrice);
+        $products = $this->productsMapper($rows, $maxStock, $minPrice, $maxPrice, $input->getArgument('test'));
 
-        dd([$maxStock, $maxPrice, $minPrice, $rowsMapped]);
+        $output->writeln('<fg=white> Available products for processing: ' . (count($products['passed']) + count($products['failed'])) . '</>');
+        $output->writeln('<info> Successfully imported products: ' . count($products['passed']) . '</info>');
+        $output->writeln('<fg=red> No products were imported because criteria were not met: ' . count($products['failed']) . '</>');
+        dd([$maxStock, $maxPrice, $minPrice, $products]);
     }
 
     /**
@@ -84,9 +93,19 @@ class ImportProductCommand extends Command
         return $decoder->decode(file_get_contents($file), 'csv');
     }
 
-    protected function productsMapper(array $inputRows, $maxStock, $minPrice, $maxPrice)
+    /**
+     * Split products by criteria
+     * @param array $inputRows
+     * @param $maxStock
+     * @param $minPrice
+     * @param $maxPrice
+     * @param false $test
+     * @return array
+     * @throws \Exception
+     */
+    protected function productsMapper(array $inputRows, $maxStock, $minPrice, $maxPrice, $test = false): array
     {
-        $rows = [];
+        $products = [];
         $mappedRows = $this->mapRows($inputRows);
 
         if (!count($mappedRows['valid'])) {
@@ -95,19 +114,58 @@ class ImportProductCommand extends Command
 
         foreach ($mappedRows['valid'] as $row) {
             if ($row['Stock'] < $maxStock && $row['Cost in GBP'] < $minPrice) {
-                $rows['failed'][] = $row;
+                $products['failed'][] = $row;
             } elseif ($row['Cost in GBP'] > $maxPrice) {
-                $rows['failed'][] = $row;
+                $products['failed'][] = $row;
             } elseif (!empty($row['Discontinued']) && $row['Discontinued'] === 'yes') {
-                $row['dtmDiscontinued'] = date('Y-m-d H:m:i');
                 $row = array_merge($row, compact('maxStock', 'minPrice', 'maxPrice'));
-                $rows['passed'][] = $row;
+
+                if (!$test) {
+                    $row = $this->storeProduct($row, true);
+                }
+
+                $products['passed'][] = $row;
             } else {
-                $rows['passed'][] = $row;
+                $row = array_merge($row, compact('maxStock', 'minPrice', 'maxPrice'));
+                $products['passed'][] = !$test ? $this->storeProduct($row) : $row;
             }
         }
 
-        return $rows;
+        return $products;
+    }
+
+    /**
+     * Store/Update products
+     * @param array $product
+     * @param bool $discontinued
+     * @return bool
+     */
+    private function storeProduct( array $product, bool $discontinued = false): bool
+    {
+        $timestamp = new \DateTimeImmutable();
+
+        $tblProductData = $this->entityManager
+            ->getRepository(TblProductData::class)
+            ->findOneBy(['strProductCode' => $product['Product Code']]);
+
+        if (!$tblProductData) {
+            $tblProductData = new TblProductData();
+        }
+
+        $tblProductData->setStrProductName($product['Product Name']);
+        $tblProductData->setStrProductDesc($product['Product Description']);
+        $tblProductData->setStrProductCode($product['Product Code']);
+        $tblProductData->setDtmAdded($timestamp);
+        $tblProductData->setStmTimestamp($timestamp);
+        $tblProductData->setDtmDiscontinued($discontinued ? $timestamp : null);
+        $tblProductData->setMaxStock($product['maxStock']);
+        $tblProductData->setMinPrice($product['minPrice']);
+        $tblProductData->setMaxPrice($product['maxPrice']);
+
+        $this->entityManager->persist($tblProductData);
+        $this->entityManager->flush();
+
+        return (bool)$tblProductData->getIntProductDataId();
     }
 
 
@@ -134,7 +192,7 @@ class ImportProductCommand extends Command
     }
 
     /**
-     * Check vslid cost
+     * Check valid cost
      */
     private function checkPrice($price)
     {
