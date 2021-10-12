@@ -8,6 +8,7 @@ use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Question\Question;
 use Symfony\Component\Serializer\Encoder\CsvEncoder;
@@ -22,6 +23,10 @@ class ImportProductCommand extends Command
 {
     const MAX_ATTEMPTS = 5;
     private $question;
+    private $inputFile;
+    private $maxStock;
+    private $minPrice;
+    private $maxPrice;
 
     public function __construct(string $projectDir, EntityManagerInterface $entityManager)
     {
@@ -35,37 +40,44 @@ class ImportProductCommand extends Command
     {
         $this
             ->setProcessTitle('Import Products')
-            ->addArgument('test', InputArgument::OPTIONAL);
+            ->setDescription('Default imported file /public/files/stock.csv. [--file] makes it possible to define the file manually')
+            ->addArgument('test', InputArgument::OPTIONAL)
+            ->addOption('file', null, InputOption::VALUE_OPTIONAL)
+            ->addOption('max-stock', null, InputOption::VALUE_OPTIONAL)
+            ->addOption('min-price', null, InputOption::VALUE_OPTIONAL)
+            ->addOption('max-price', null, InputOption::VALUE_OPTIONAL);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-
         if ($input->getArgument('test')) {
-            $maxStock = 10;
-            $minPrice = 5;
-            $maxPrice = 1000;
+            $this->inputFile = $input->getOption('file');
+            $this->maxStock = $input->getOption('max-stock');
+            $this->minPrice = $input->getOption('min-price');
+            $this->maxPrice = $input->getOption('max-price');
         } else {
+            $this->inputFile = $input->getOption('file') ?? '/public/files/stock.csv';
             $helper = $this->getHelper('question');
 
             $this->questionHandler('Enter Max Product Quantity: ');
-            $maxStock = $helper->ask($input, $output, $this->question);
+            $this->maxStock = $helper->ask($input, $output, $this->question);
 
             $this->questionHandler('Enter Min Product Price: ');
-            $minPrice = $helper->ask($input, $output, $this->question);
+            $this->minPrice = $helper->ask($input, $output, $this->question);
 
             $this->questionHandler('Enter Max Product Price: ');
-            $maxPrice = $helper->ask($input, $output, $this->question);
+            $this->maxPrice = $helper->ask($input, $output, $this->question);
         }
 
         $rows = $this->csvRowsProvider();
 
-        $products = $this->productsMapper($rows, $maxStock, $minPrice, $maxPrice, $input->getArgument('test'));
+        $products = $this->productsMapper($rows, (bool)$input->getArgument('test'));
 
         $output->writeln('<fg=white> Available products for processing: ' . (count($products['passed']) + count($products['failed'])) . '</>');
         $output->writeln('<info> Successfully imported products: ' . count($products['passed']) . '</info>');
-        $output->writeln('<fg=red> No products were imported because criteria were not met: ' . count($products['failed']) . '</>');
-        dd([$maxStock, $maxPrice, $minPrice, $products]);
+        $output->writeln('<fg=red> The products were not imported because criteria were not met: ' . count($products['failed']) . '</>');
+
+        return Command::SUCCESS;
     }
 
     /**
@@ -81,12 +93,16 @@ class ImportProductCommand extends Command
     }
 
     /**
-     * Get string from CSV file and supply it in array
-     * @return mixed
+     * Create file path and get string from CSV file and supply it in array
+     * @return array
      */
-    protected function csvRowsProvider(): array
+    private function csvRowsProvider(): array
     {
-        $file = $this->projectDir . '/public/files/stock.csv';
+        $file = $this->projectDir . $this->inputFile;
+
+        if (!file_exists($file)) {
+            throw new \Exception($this->inputFile . ' is not exists!');
+        }
 
         $decoder = new Serializer([new ObjectNormalizer()], [new CsvEncoder()]);
 
@@ -96,14 +112,11 @@ class ImportProductCommand extends Command
     /**
      * Split products by criteria
      * @param array $inputRows
-     * @param $maxStock
-     * @param $minPrice
-     * @param $maxPrice
      * @param false $test
      * @return array
      * @throws \Exception
      */
-    protected function productsMapper(array $inputRows, $maxStock, $minPrice, $maxPrice, $test = false): array
+    private function productsMapper(array $inputRows, bool $test = false): array
     {
         $products = [];
         $mappedRows = $this->mapRows($inputRows);
@@ -113,12 +126,12 @@ class ImportProductCommand extends Command
         }
 
         foreach ($mappedRows['valid'] as $row) {
-            if ($row['Stock'] < $maxStock && $row['Cost in GBP'] < $minPrice) {
+            if ($row['Stock'] < $this->maxStock && $row['Cost in GBP'] < $this->minPrice) {
                 $products['failed'][] = $row;
-            } elseif ($row['Cost in GBP'] > $maxPrice) {
+            } elseif ($row['Cost in GBP'] > $this->maxPrice) {
                 $products['failed'][] = $row;
             } elseif (!empty($row['Discontinued']) && $row['Discontinued'] === 'yes') {
-                $row = array_merge($row, compact('maxStock', 'minPrice', 'maxPrice'));
+                $row = $this->mergeParams($row);
 
                 if (!$test) {
                     $row = $this->storeProduct($row, true);
@@ -126,12 +139,25 @@ class ImportProductCommand extends Command
 
                 $products['passed'][] = $row;
             } else {
-                $row = array_merge($row, compact('maxStock', 'minPrice', 'maxPrice'));
+                $row = $this->mergeParams($row);
                 $products['passed'][] = !$test ? $this->storeProduct($row) : $row;
             }
         }
 
         return $products;
+    }
+
+    /**
+     * @param $row
+     * @return mixed
+     */
+    private function mergeParams(array $row): array
+    {
+        $row['maxStock'] = $this->maxStock;
+        $row['minPrice'] = $this->minPrice;
+        $row['maxPrice'] = $this->maxPrice;
+
+        return $row;
     }
 
     /**
@@ -168,20 +194,20 @@ class ImportProductCommand extends Command
         return (bool)$tblProductData->getIntProductDataId();
     }
 
-
     /**
      * Map rows by valid content
      * @param $inputRows
      * @return array
      */
-    protected function mapRows($inputRows): array {
+    private function mapRows($inputRows): array {
         $rows = [];
 
         foreach ($inputRows as $row) {
             $passed = 0;
+            $passed += !empty($row['Product Code']) && is_string($row['Product Code']);
             $passed += !empty($row['Stock']) && is_numeric($row['Stock']);
             $passed += !empty($row['Cost in GBP']) && $this->checkPrice($row['Cost in GBP']);
-            if ($passed === 2) {
+            if ($passed === 3) {
                 $rows['valid'][] = $row;
             } else {
                 $rows['invalid'][] = $row;
@@ -204,7 +230,7 @@ class ImportProductCommand extends Command
      * Validate input product parameters
      * @throws \Exception
      */
-    protected function validate()
+    private function validate()
     {
         $this->question->setValidator(function ($answer) {
 
