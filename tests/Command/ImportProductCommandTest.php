@@ -13,21 +13,17 @@ class ImportProductCommandTest extends KernelTestCase
         $kernel = self::bootKernel();
         $application = new Application($kernel);
 
-        $command = $application->find('import-product');
+        $command = $application->find('app:import-product');
         $commandTester = new CommandTester($command);
         $commandTester->execute([
             'test' => true,
             '--max-stock' => 10,
-            '--min-price' => 5,
-            '--max-price' => 1000,
-            '--file' => '/public/files/test.csv'
+            '--min-price' => '5',
+            '--max-price' => '1000',
         ]);
 
         $output = $commandTester->getDisplay();
-        $this->assertStringContainsString(
-            " Available products for processing: 15\n Successfully imported products: 13\n The products were not imported because criteria were not met: 2\n",
-            $output
-        );
+        $this->assertStringContainsString('22,20,2', $output);
         $this->assertSame('test', $kernel->getEnvironment());
     }
 }

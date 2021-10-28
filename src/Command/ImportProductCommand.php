@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Command;
 
 use App\Entity\ProductData;
+use App\Helpers\Logger;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -12,30 +13,31 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\Question;
 use Symfony\Component\Serializer\Encoder\CsvEncoder;
 use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
 use Symfony\Component\Serializer\Serializer;
 
 #[AsCommand(
-    name: 'import-product',
+    name: 'app:import-product',
     description: 'Import Products from CSV',
 )]
 class ImportProductCommand extends Command
 {
-    const MAX_ATTEMPTS = 5;
-    private Question $question;
-    private mixed $inputFile;
     private int $maxStock;
     private string $minPrice;
     private string $maxPrice;
     private string $projectDir;
     private EntityManagerInterface $entityManager;
+    private Logger $logger;
+    private string $logFile;
 
-    public function __construct(string $projectDir, EntityManagerInterface $entityManager)
+    public function __construct(EntityManagerInterface $entityManager, string $projectDir)
     {
-        $this->projectDir = $projectDir;
         $this->entityManager = $entityManager;
+        $this->projectDir = $projectDir;
+        $importLogDir = $this->projectDir . '/var/log/import';
+        $this->logFile = $importLogDir . '/csv-import.log';
+        $this->logger = new Logger($importLogDir,  $this->logFile);
 
         parent::__construct();
     }
@@ -44,9 +46,7 @@ class ImportProductCommand extends Command
     {
         $this
             ->setProcessTitle('Import Products')
-            ->setDescription('Default imported file /public/files/stock.csv. [--file] makes it possible to define the file manually')
             ->addArgument('test', InputArgument::OPTIONAL)
-            ->addOption('file', null, InputOption::VALUE_OPTIONAL)
             ->addOption('max-stock', null, InputOption::VALUE_OPTIONAL)
             ->addOption('min-price', null, InputOption::VALUE_OPTIONAL)
             ->addOption('max-price', null, InputOption::VALUE_OPTIONAL);
@@ -55,80 +55,83 @@ class ImportProductCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         if ($input->getArgument('test')) {
-            $this->inputFile = $input->getOption('file');
-            $this->maxStock = (int) $input->getOption('max-stock');
-            $this->minPrice = $input->getOption('min-price');
-            $this->maxPrice = $input->getOption('max-price');
+            $fileName = 'test.csv';
         } else {
-            $this->inputFile = $input->getOption('file') ?? '/public/files/stock.csv';
-
-            $helper = $this->getHelper('question');
-
-            $this->questionHandler('Enter Max Product Quantity: ');
-            $this->maxStock = (int) $helper->ask($input, $output, $this->question);
-
-            $this->questionHandler('Enter Min Product Price: ');
-            $this->minPrice = $helper->ask($input, $output, $this->question);
-
-            $this->questionHandler('Enter Max Product Price: ');
-            $this->maxPrice = $helper->ask($input, $output, $this->question);
+            $fileName = 'stock.csv';
         }
 
+        $file = $this->projectDir . '/public/files/' . $fileName;
 
-        $rows = $this->csvRowsProvider();
+        if (!file_exists($file)) {
+            $this->logger->setMessage('Import file ' . $file . ' is not exists.')->log('error');
 
-        $products = $this->productsMapper($rows, (bool)$input->getArgument('test'));
+            exit;
+        }
 
-        $output->writeln('<fg=white> Available products for processing: ' . (count($products['passed']) + count($products['failed'])) . '</>');
-        $output->writeln('<info> Successfully imported products: ' . count($products['passed']) . '</info>');
-        $output->writeln('<fg=red> The products were not imported because criteria were not met: ' . count($products['failed']) . '</>');
+        $this->maxStock = (int) $input->getOption('max-stock');
+
+        if (!$this->maxStock) {
+            $this->logger->setMessage('Max Stock was not specifies')->log('error');
+
+            exit;
+        }
+
+        $this->minPrice = $input->getOption('min-price');
+        $this->maxPrice = $input->getOption('max-price');
+
+
+        $rows = $this->csvRowsProvider($file);
+
+        $mappedRows = $this->mapRows($rows);
+
+        if (!count($mappedRows['valid'])) {
+            $this->logger->setMessage('You have no valid data to import')->log( 'info');
+        }
+
+        $products = $this->productsMapper($mappedRows);
+
+        $this->logger->setMessage(
+            'Available: ' . (count($products['passed']) + count($products['failed']))
+            . ' Success: ' . count($products['passed'])
+            . ' Failed: ' . count($products['failed']));
+
+        if (count($products['failed'])) {
+            $message = "\nFailed list:";
+
+            foreach ($products['failed'] as $item) {
+                $message .= "\n Product Name: " . $item['Product Name']
+                    . ' / Product Code: ' . $item['Product Code'];
+            }
+
+            $this->logger->setMessage($message);
+        }
+
+        $this->logger->log('success');
+
+        $output->write((count($products['passed']) + count($products['failed'])).','.count($products['passed']).','.count($products['failed']));
 
         return Command::SUCCESS;
-    }
-
-    /**
-     * Handle question
-     * @param string $question
-     * @throws \Exception
-     */
-    private function questionHandler(string $question)
-    {
-        $this->question = new Question($question);
-        $this->validate();
-        $this->question->setMaxAttempts(self::MAX_ATTEMPTS);
     }
 
     /**
      * Create file path and get string from CSV file and supply it in array
      * @return array
      */
-    private function csvRowsProvider(): array
+    private function csvRowsProvider(string $file): array
     {
-        $file = $this->projectDir . $this->inputFile;
-
-        if (!file_exists($file)) {
-            throw new \Exception($this->inputFile . ' is not exists!');
-        }
-
         $decoder = new Serializer([new ObjectNormalizer()], [new CsvEncoder()]);
         return $decoder->decode(file_get_contents($file), 'csv');
     }
 
     /**
      * Split products by criteria
-     * @param array $inputRows
+     * @param array $mappedRows
      * @param false $test
      * @return array
-     * @throws \Exception
      */
-    private function productsMapper(array $inputRows, bool $test = false): array
+    private function productsMapper(array $mappedRows): array
     {
         $products = [];
-        $mappedRows = $this->mapRows($inputRows);
-
-        if (!count($mappedRows['valid'])) {
-            throw new \Exception('You have no valid data to import');
-        }
 
         foreach ($mappedRows['valid'] as $row) {
             if ($row['Stock'] < $this->maxStock && $row['Cost in GBP'] < $this->minPrice) {
@@ -137,15 +140,12 @@ class ImportProductCommand extends Command
                 $products['failed'][] = $row;
             } elseif (!empty($row['Discontinued']) && $row['Discontinued'] === 'yes') {
                 $row = $this->mergeParams($row);
-
-                if (!$test) {
                     $row = $this->storeProduct($row, true);
-                }
 
                 $products['passed'][] = $row;
             } else {
                 $row = $this->mergeParams($row);
-                $products['passed'][] = !$test ? $this->storeProduct($row) : $row;
+                $products['passed'][] = $this->storeProduct($row);
             }
         }
 
@@ -211,7 +211,7 @@ class ImportProductCommand extends Command
             $passed = 0;
             $passed += !empty($row['Product Code']) && is_string($row['Product Code']);
             $passed += !empty($row['Stock']) && is_numeric($row['Stock']);
-            $passed += !empty($row['Cost in GBP']) && $this->checkPrice($row['Cost in GBP']);
+            $passed += !empty($row['Cost in GBP']) && is_numeric($row['Cost in GBP']);
             if ($passed === 3) {
                 $rows['valid'][] = $row;
             } else {
@@ -220,36 +220,5 @@ class ImportProductCommand extends Command
         }
 
         return $rows;
-    }
-
-    /**
-     * Check valid cost
-     * @param string $price
-     * @return bool
-     */
-    private function checkPrice(string $price): bool
-    {
-        preg_match('/^((\d+)|(\d{1,3})(\,\d{3})*)(\.\d{2})$/', $price, $matches);
-        return !!count($matches);
-    }
-
-    /**
-     * Validate input product parameters
-     * @throws \Exception
-     */
-    private function validate(): void
-    {
-        $this->question->setValidator(function ($answer) {
-
-            if (empty($answer)) {
-                throw new \Exception('The value cannot be empty');
-            } else {
-                if (!is_numeric($answer)) {
-                    throw new \Exception('The value must be numeric');
-                }
-            }
-
-            return $answer;
-        });
     }
 }
