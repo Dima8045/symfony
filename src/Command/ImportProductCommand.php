@@ -1,8 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Command;
 
-use App\Entity\TblProductData;
+use App\Entity\ProductData;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -22,11 +24,13 @@ use Symfony\Component\Serializer\Serializer;
 class ImportProductCommand extends Command
 {
     const MAX_ATTEMPTS = 5;
-    private $question;
-    private $inputFile;
-    private $maxStock;
-    private $minPrice;
-    private $maxPrice;
+    private Question $question;
+    private mixed $inputFile;
+    private int $maxStock;
+    private string $minPrice;
+    private string $maxPrice;
+    private string $projectDir;
+    private EntityManagerInterface $entityManager;
 
     public function __construct(string $projectDir, EntityManagerInterface $entityManager)
     {
@@ -52,15 +56,16 @@ class ImportProductCommand extends Command
     {
         if ($input->getArgument('test')) {
             $this->inputFile = $input->getOption('file');
-            $this->maxStock = $input->getOption('max-stock');
+            $this->maxStock = (int) $input->getOption('max-stock');
             $this->minPrice = $input->getOption('min-price');
             $this->maxPrice = $input->getOption('max-price');
         } else {
             $this->inputFile = $input->getOption('file') ?? '/public/files/stock.csv';
+
             $helper = $this->getHelper('question');
 
             $this->questionHandler('Enter Max Product Quantity: ');
-            $this->maxStock = $helper->ask($input, $output, $this->question);
+            $this->maxStock = (int) $helper->ask($input, $output, $this->question);
 
             $this->questionHandler('Enter Min Product Price: ');
             $this->minPrice = $helper->ask($input, $output, $this->question);
@@ -68,6 +73,7 @@ class ImportProductCommand extends Command
             $this->questionHandler('Enter Max Product Price: ');
             $this->maxPrice = $helper->ask($input, $output, $this->question);
         }
+
 
         $rows = $this->csvRowsProvider();
 
@@ -105,7 +111,6 @@ class ImportProductCommand extends Command
         }
 
         $decoder = new Serializer([new ObjectNormalizer()], [new CsvEncoder()]);
-
         return $decoder->decode(file_get_contents($file), 'csv');
     }
 
@@ -149,7 +154,7 @@ class ImportProductCommand extends Command
 
     /**
      * @param $row
-     * @return mixed
+     * @return array
      */
     private function mergeParams(array $row): array
     {
@@ -170,36 +175,36 @@ class ImportProductCommand extends Command
     {
         $timestamp = new \DateTimeImmutable();
 
-        $tblProductData = $this->entityManager
-            ->getRepository(TblProductData::class)
-            ->findOneBy(['strProductCode' => $product['Product Code']]);
+        $productData = $this->entityManager
+            ->getRepository(ProductData::class)
+            ->findOneBy(['productCode' => $product['Product Code']]);
 
-        if (!$tblProductData) {
-            $tblProductData = new TblProductData();
+        if (!$productData) {
+            $productData = new ProductData();
         }
 
-        $tblProductData->setStrProductName($product['Product Name']);
-        $tblProductData->setStrProductDesc($product['Product Description']);
-        $tblProductData->setStrProductCode($product['Product Code']);
-        $tblProductData->setDtmAdded($timestamp);
-        $tblProductData->setStmTimestamp($timestamp);
-        $tblProductData->setDtmDiscontinued($discontinued ? $timestamp : null);
-        $tblProductData->setMaxStock($product['maxStock']);
-        $tblProductData->setMinPrice($product['minPrice']);
-        $tblProductData->setMaxPrice($product['maxPrice']);
+        $productData->setProductName($product['Product Name']);
+        $productData->setProductDescription($product['Product Description']);
+        $productData->setProductCode($product['Product Code']);
+        $productData->setAddedAt($timestamp);
+        $productData->setCreatedAt($timestamp);
+        $productData->setDiscontinuedAt($discontinued ? $timestamp : null);
+        $productData->setMaxStock($product['maxStock']);
+        $productData->setMinPrice($product['minPrice']);
+        $productData->setMaxPrice($product['maxPrice']);
 
-        $this->entityManager->persist($tblProductData);
+        $this->entityManager->persist($productData);
         $this->entityManager->flush();
 
-        return (bool)$tblProductData->getIntProductDataId();
+        return (bool)$productData->getId();
     }
 
     /**
      * Map rows by valid content
-     * @param $inputRows
+     * @param array $inputRows
      * @return array
      */
-    private function mapRows($inputRows): array {
+    private function mapRows(array $inputRows): array {
         $rows = [];
 
         foreach ($inputRows as $row) {
@@ -219,8 +224,10 @@ class ImportProductCommand extends Command
 
     /**
      * Check valid cost
+     * @param string $price
+     * @return bool
      */
-    private function checkPrice($price)
+    private function checkPrice(string $price): bool
     {
         preg_match('/^((\d+)|(\d{1,3})(\,\d{3})*)(\.\d{2})$/', $price, $matches);
         return !!count($matches);
@@ -230,11 +237,11 @@ class ImportProductCommand extends Command
      * Validate input product parameters
      * @throws \Exception
      */
-    private function validate()
+    private function validate(): void
     {
         $this->question->setValidator(function ($answer) {
 
-            if (trim($answer) == '') {
+            if (empty($answer)) {
                 throw new \Exception('The value cannot be empty');
             } else {
                 if (!is_numeric($answer)) {
