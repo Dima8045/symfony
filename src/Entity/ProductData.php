@@ -37,7 +37,7 @@ class ProductData
     /**
      * @ORM\Column(type="datetime", nullable=true, name="dtmAdded")
      */
-    private ?\DateTimeInterface $addedAt;
+    private ?\DateTimeInterface $createdAt;
 
     /**
      * @ORM\Column(type="datetime", nullable=true, name="dtmDiscontinued")
@@ -45,25 +45,19 @@ class ProductData
     private ?\DateTimeInterface $discontinuedAt;
 
     /**
-     * @ORM\Column(type="datetime", name="stmTimestamp")
+     * @ORM\Column(type="integer", nullable=true, name="intStock")
      */
-    private \DateTimeInterface $createdAt;
+    private int $stock;
 
     /**
-     * @ORM\Column(type="integer", nullable=true, name="intMaxStock")
+     * @ORM\Column(type="decimal", precision=9, scale=2, nullable=false, name="decCost")
      */
-    private int $maxStock;
+    private string $cost;
 
     /**
-     * @ORM\Column(type="decimal", precision=9, scale=2, nullable=true, name="decMaxPrice")
+     * @ORM\Column(type="datetime_immutable", nullable=false, name="stmTimestamp")
      */
-    private string $maxPrice;
-
-    /**
-     *
-     * @ORM\Column(type="decimal", precision=9, scale=2, nullable=true, name="decMinPrice")
-     */
-    private string $minPrice;
+    private \DateTimeImmutable $updatedAt;
 
     public function getId(): ?int
     {
@@ -113,14 +107,14 @@ class ProductData
         return $this;
     }
 
-    public function getAddedAt(): ?\DateTimeInterface
+    public function getCreatedAt(): ?\DateTimeInterface
     {
-        return $this->addedAt;
+        return $this->createdAt;
     }
 
-    public function setAddedAt(?\DateTimeInterface $addedAt): self
+    public function setCreatedAt(?\DateTimeInterface $createdAt): self
     {
-        $this->addedAt = $addedAt;
+        $this->createdAt = $createdAt;
 
         return $this;
     }
@@ -137,50 +131,38 @@ class ProductData
         return $this;
     }
 
-    public function getCreatedAt(): ?\DateTimeInterface
+    public function getStock(): ?int
     {
-        return $this->createdAt;
+        return $this->stock;
     }
 
-    public function setCreatedAt(\DateTimeInterface $createdAt): self
+    public function setStock(?int $stock): self
     {
-        $this->createdAt = $createdAt;
+        $this->stock = $stock;
 
         return $this;
     }
 
-    public function getMaxStock(): ?int
+    public function getCost(): string
     {
-        return $this->maxStock;
+        return $this->cost;
     }
 
-    public function setMaxStock(?int $maxStock): self
+    public function setCost(string $cost): self
     {
-        $this->maxStock = $maxStock;
+        $this->cost = $cost;
 
         return $this;
     }
 
-    public function getMinPrice(): string
+    public function getUpdatedAt(): \DateTimeImmutable
     {
-        return $this->minPrice;
+        return $this->updatedAt;
     }
 
-    public function setMinPrice(string $minPrice): self
+    public function setUpdatedAt(\DateTimeImmutable $updatedAt): self
     {
-        $this->minPrice = $minPrice;
-
-        return $this;
-    }
-
-    public function getMaxPrice(): string
-    {
-        return $this->maxPrice;
-    }
-
-    public function setMaxPrice(string $maxPrice): self
-    {
-        $this->maxPrice = $maxPrice;
+        $this->updatedAt = $updatedAt;
 
         return $this;
     }

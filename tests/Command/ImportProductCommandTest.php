@@ -23,7 +23,10 @@ class ImportProductCommandTest extends KernelTestCase
         ]);
 
         $output = $commandTester->getDisplay();
-        $this->assertStringContainsString('22,20,2', $output);
+        $this->assertStringContainsString(
+            " Available products for processing: 22\n Successfully imported products: 20\n The products were not imported because criteria were not met: 2\n",
+            $output
+        );
         $this->assertSame('test', $kernel->getEnvironment());
     }
 }

@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\Command;
 
 use App\Entity\ProductData;
-use App\Helpers\Logger;
 use Doctrine\ORM\EntityManagerInterface;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -26,18 +26,16 @@ class ImportProductCommand extends Command
     private int $maxStock;
     private string $minPrice;
     private string $maxPrice;
-    private string $projectDir;
+    private string $importFileDir;
     private EntityManagerInterface $entityManager;
-    private Logger $logger;
-    private string $logFile;
+    private LoggerInterface $logger;
 
-    public function __construct(EntityManagerInterface $entityManager, string $projectDir)
+    public function __construct(EntityManagerInterface $entityManager, LoggerInterface $logger, string $importFileDir)
     {
         $this->entityManager = $entityManager;
-        $this->projectDir = $projectDir;
-        $importLogDir = $this->projectDir . '/var/log/import';
-        $this->logFile = $importLogDir . '/csv-import.log';
-        $this->logger = new Logger($importLogDir,  $this->logFile);
+        $this->importFileDir = $importFileDir;
+
+        $this->logger = $logger;
 
         parent::__construct();
     }
@@ -55,25 +53,21 @@ class ImportProductCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         if ($input->getArgument('test')) {
-            $fileName = 'test.csv';
+            $file = $this->importFileDir . 'test.csv';
         } else {
-            $fileName = 'stock.csv';
+            $file = $this->importFileDir . 'stock.csv';
         }
 
-        $file = $this->projectDir . '/public/files/' . $fileName;
-
         if (!file_exists($file)) {
-            $this->logger->setMessage('Import file ' . $file . ' is not exists.')->log('error');
+            $this->logger->error('Import file ' . $file . ' is not exists.');
 
-            exit;
+            return Command::SUCCESS;
         }
 
         $this->maxStock = (int) $input->getOption('max-stock');
 
         if (!$this->maxStock) {
-            $this->logger->setMessage('Max Stock was not specifies')->log('error');
-
-            exit;
+            return Command::FAILURE;
         }
 
         $this->minPrice = $input->getOption('min-price');
@@ -85,48 +79,44 @@ class ImportProductCommand extends Command
         $mappedRows = $this->mapRows($rows);
 
         if (!count($mappedRows['valid'])) {
-            $this->logger->setMessage('You have no valid data to import')->log( 'info');
+            $this->logger->notice('You have no valid data to import');
         }
 
         $products = $this->productsMapper($mappedRows);
 
-        $this->logger->setMessage(
+        $message = (
             'Available: ' . (count($products['passed']) + count($products['failed']))
             . ' Success: ' . count($products['passed'])
             . ' Failed: ' . count($products['failed']));
 
         if (count($products['failed'])) {
-            $message = "\nFailed list:";
-
-            foreach ($products['failed'] as $item) {
-                $message .= "\n Product Name: " . $item['Product Name']
-                    . ' / Product Code: ' . $item['Product Code'];
-            }
-
-            $this->logger->setMessage($message);
+            $message .= "\nFailed list:";
         }
 
-        $this->logger->log('success');
+        $this->logger->info($message, $products['failed']);
 
-        $output->write((count($products['passed']) + count($products['failed'])).','.count($products['passed']).','.count($products['failed']));
+        $output->writeln('<fg=white> Available products for processing: ' . (count($products['passed']) + count($products['failed'])) . '</>');
+        $output->writeln('<info> Successfully imported products: ' . count($products['passed']) . '</info>');
+        $output->writeln('<fg=red> The products were not imported because criteria were not met: ' . count($products['failed']) . '</>');
 
         return Command::SUCCESS;
     }
 
     /**
      * Create file path and get string from CSV file and supply it in array
+     * @param string $file
      * @return array
      */
     private function csvRowsProvider(string $file): array
     {
         $decoder = new Serializer([new ObjectNormalizer()], [new CsvEncoder()]);
+
         return $decoder->decode(file_get_contents($file), 'csv');
     }
 
     /**
      * Split products by criteria
      * @param array $mappedRows
-     * @param false $test
      * @return array
      */
     private function productsMapper(array $mappedRows): array
@@ -139,30 +129,13 @@ class ImportProductCommand extends Command
             } elseif ($row['Cost in GBP'] > $this->maxPrice) {
                 $products['failed'][] = $row;
             } elseif (!empty($row['Discontinued']) && $row['Discontinued'] === 'yes') {
-                $row = $this->mergeParams($row);
-                    $row = $this->storeProduct($row, true);
-
-                $products['passed'][] = $row;
+                $products['passed'][] = $this->storeProduct($row, true);
             } else {
-                $row = $this->mergeParams($row);
                 $products['passed'][] = $this->storeProduct($row);
             }
         }
 
         return $products;
-    }
-
-    /**
-     * @param $row
-     * @return array
-     */
-    private function mergeParams(array $row): array
-    {
-        $row['maxStock'] = $this->maxStock;
-        $row['minPrice'] = $this->minPrice;
-        $row['maxPrice'] = $this->maxPrice;
-
-        return $row;
     }
 
     /**
@@ -186,12 +159,11 @@ class ImportProductCommand extends Command
         $productData->setProductName($product['Product Name']);
         $productData->setProductDescription($product['Product Description']);
         $productData->setProductCode($product['Product Code']);
-        $productData->setAddedAt($timestamp);
         $productData->setCreatedAt($timestamp);
+        $productData->setUpdatedAt($timestamp);
         $productData->setDiscontinuedAt($discontinued ? $timestamp : null);
-        $productData->setMaxStock($product['maxStock']);
-        $productData->setMinPrice($product['minPrice']);
-        $productData->setMaxPrice($product['maxPrice']);
+        $productData->setStock((int) $product['Stock']);
+        $productData->setCost($product['Cost in GBP']);
 
         $this->entityManager->persist($productData);
         $this->entityManager->flush();

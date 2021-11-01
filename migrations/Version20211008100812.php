@@ -20,7 +20,7 @@ final class Version20211008100812 extends AbstractMigration
     public function up(Schema $schema): void
     {
         // this up() migration is auto-generated, please modify it to your needs
-        $this->addSql('ALTER TABLE tblProductData ADD (intMaxStock INT, decMinPrice decimal(9,2) null, decMaxPrice decimal(9,2) null)');
+        $this->addSql('ALTER TABLE tblProductData ADD (intStock INT, decCost decimal(9,2) NOT NULL)');
     }
 
     public function isTransactional(): bool
@@ -31,8 +31,7 @@ final class Version20211008100812 extends AbstractMigration
     public function down(Schema $schema): void
     {
         // this down() migration is auto-generated, please modify it to your needs
-        $this->addSql('ALTER TABLE tblProductData DROP COLUMN intMaxStock');
-        $this->addSql('ALTER TABLE tblProductData DROP COLUMN decMaxPrice');
-        $this->addSql('ALTER TABLE tblProductData DROP COLUMN decMaxPrice');
+        $this->addSql('ALTER TABLE tblProductData DROP COLUMN intStock');
+        $this->addSql('ALTER TABLE tblProductData DROP COLUMN decCost');
     }
 }
