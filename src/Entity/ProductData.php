@@ -64,28 +64,11 @@ class ProductData
         return $this->id;
     }
 
-    public function setId(int $id): self
-    {
-        $this->id = $id;
-
-        return $this;
-    }
-
-    public function getProductName(): ?string
-    {
-        return $this->productName;
-    }
-
     public function setProductName(string $productName): self
     {
         $this->productName = $productName;
 
         return $this;
-    }
-
-    public function getProductDescription(): ?string
-    {
-        return $this->productDescription;
     }
 
     public function setProductDescription(string $productDescription): self
@@ -107,21 +90,11 @@ class ProductData
         return $this;
     }
 
-    public function getCreatedAt(): ?\DateTimeInterface
-    {
-        return $this->createdAt;
-    }
-
     public function setCreatedAt(?\DateTimeInterface $createdAt): self
     {
         $this->createdAt = $createdAt;
 
         return $this;
-    }
-
-    public function getDiscontinuedAt(): ?\DateTimeInterface
-    {
-        return $this->discontinuedAt;
     }
 
     public function setDiscontinuedAt(?\DateTimeInterface $discontinuedAt): self
@@ -131,11 +104,6 @@ class ProductData
         return $this;
     }
 
-    public function getStock(): ?int
-    {
-        return $this->stock;
-    }
-
     public function setStock(?int $stock): self
     {
         $this->stock = $stock;
@@ -143,21 +111,11 @@ class ProductData
         return $this;
     }
 
-    public function getCost(): string
-    {
-        return $this->cost;
-    }
-
     public function setCost(string $cost): self
     {
         $this->cost = $cost;
 
         return $this;
-    }
-
-    public function getUpdatedAt(): \DateTimeImmutable
-    {
-        return $this->updatedAt;
     }
 
     public function setUpdatedAt(\DateTimeImmutable $updatedAt): self

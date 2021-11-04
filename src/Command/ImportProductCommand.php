@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Command;
 
 use App\Entity\ProductData;
+use App\Service\ImportProductLogger;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -30,12 +31,12 @@ class ImportProductCommand extends Command
     private EntityManagerInterface $entityManager;
     private LoggerInterface $logger;
 
-    public function __construct(EntityManagerInterface $entityManager, LoggerInterface $logger, string $importFileDir)
+    public function __construct(EntityManagerInterface $entityManager, LoggerInterface $importLogger, string $importFileDir)
     {
         $this->entityManager = $entityManager;
         $this->importFileDir = $importFileDir;
 
-        $this->logger = $logger;
+        $this->logger = $importLogger;
 
         parent::__construct();
     }
